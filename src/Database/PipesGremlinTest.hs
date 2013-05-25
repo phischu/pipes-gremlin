@@ -7,5 +7,5 @@ import Control.Proxy.Safe (trySafeIO,tryK)
 import Database.PipesGremlin
 
 test :: IO ()
-test = (trySafeIO $ runProxy $ runEitherK $ v 1 >-> tryK printD) >>= print
+test = (trySafeIO $ runProxy $ runEitherK $ vertex 1 >-> outEdges "PACKAGE" >-> tryK printD) >>= print
 
