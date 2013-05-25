@@ -1,36 +1,37 @@
 {-# LANGUAGE DeriveDataTypeable #-}
 module Database.PipesGremlin where
 
-import Control.Proxy (Proxy,Producer,Pipe,request,respond,mapD,(>->))
+import Control.Proxy (Proxy,ProduceT,RespondT(RespondT),Pipe,request,respond,mapD,(>->),eachS)
 import Control.Proxy.Safe (ExceptionP,SafeIO,tryIO,throw)
 
 import Database.Neo4j (
     NodeID,Node,defaultClient,lookupNode,getNodeID,
-    Relationship,RelationshipType,relationshipType,typedRelationships,
+    Relationship,RelationshipType,relationshipType,outgoingRelationships,
     relationshipTo)
 
-import Control.Exception (Exception,toException)
+import Control.Monad (forever,liftM,(>=>))
+import Control.Exception (Exception)
 import Data.Typeable (Typeable)
 
-vertex :: (Proxy p) => NodeID ->  () -> Producer (ExceptionP p) Node SafeIO ()
-vertex nodeid () = tryIO (lookupNode defaultClient nodeid) >>= either (throw.PipesGremlinError) respond
+vertex :: (Proxy p) => NodeID -> ProduceT (ExceptionP p) SafeIO Node
+vertex nodeid = RespondT (tryIO (lookupNode defaultClient nodeid) >>= either (throw.PipesGremlinError) respond)
 
-nodeid :: (Proxy p,Monad m) => () -> Pipe p Node NodeID m r
-nodeid = mapD getNodeID
+nodeid :: (Proxy p,Monad m) => Node -> ProduceT p m NodeID
+nodeid = return . getNodeID
 
-edgelabel :: (Proxy p,Monad m) => () -> Pipe p Relationship RelationshipType m r
-edgelabel = mapD relationshipType
+edgelabel :: (Proxy p,Monad m) => Relationship -> ProduceT p m RelationshipType
+edgelabel = return . relationshipType
 
-out :: (Proxy p) => RelationshipType -> () -> Pipe (ExceptionP p) Node Node SafeIO ()
-out label = outEdges label >-> inVertices
+out :: (Proxy p) => Node -> ProduceT (ExceptionP p) SafeIO Node
+out = outEdges >=> inVertices
 
-outEdges :: (Proxy p) => RelationshipType -> () -> Pipe (ExceptionP p) Node Relationship SafeIO ()
-outEdges label () = do
-	node <- request ()
-	tryIO (typedRelationships defaultClient label node) >>= either (throw.PipesGremlinError) (mapM_ respond)
+outEdges :: (Proxy p) => Node -> ProduceT (ExceptionP p) SafeIO Relationship
+outEdges node = RespondT (do
+	result <- tryIO (outgoingRelationships defaultClient node)
+	either (throw . PipesGremlinError) respond result) >>= eachS
 
-inVertices :: (Proxy p,Monad m) => () -> Pipe p Relationship Node m r
-inVertices = mapD relationshipTo
+inVertices :: (Proxy p,Monad m) => Relationship -> ProduceT p m Node
+inVertices = return . relationshipTo
 
 data PipesGremlinError = PipesGremlinError String deriving (Show,Typeable)
 
