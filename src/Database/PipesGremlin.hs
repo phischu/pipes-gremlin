@@ -1,7 +1,7 @@
 {-# LANGUAGE DeriveDataTypeable, ScopedTypeVariables #-}
 module Database.PipesGremlin where
 
-import Control.Proxy (runProxy,printD,fromListS,foreverK,Proxy,ProduceT,RespondT(RespondT,runRespondT),Pipe,request,respond,mapD,(>->),eachS,toListD,liftP,ProxyFast)
+import Control.Proxy ((/>/),(\>\),(>~>),(>>~),runProxy,printD,fromListS,foreverK,Proxy,ProduceT,RespondT(RespondT,runRespondT),Pipe,request,respond,mapD,(>->),eachS,toListD,liftP,ProxyFast)
 import Control.Proxy.Trans.Writer (WriterP,execWriterK)
 import Control.Proxy.Trans.Identity (runIdentityK)
 import Control.Proxy.Safe (ExceptionP,SafeIO,tryIO,throw)
@@ -35,25 +35,29 @@ outEdges node = RespondT (do
 inVertices :: (Proxy p,Monad m) => Relationship -> ProduceT p m Node
 inVertices = return . relationshipTo
 
-aggregate :: (Proxy p,Monad m) => (() -> RespondT p () a () m b) -> () -> RespondT p () a () m [b]
-aggregate p () = undefined
+gather :: (Proxy p,Monad m) => (a -> ProduceT p m b) -> (a -> ProduceT p m [b])
+gather = undefined
 
+from :: (Monad (p x' a x' b m),Monad m,Proxy p) => (a -> RespondT p x' a x' m b) -> x' -> p x' a x' b m r
+from p = foreverK (request >=> runRespondT . p)
 
-x :: Pipe p a b m r -> Pipe p a [b] m r
-x = undefined
+--to :: (Proxy p,Monad (p a' a1 b' b' m),Monad m) => (a -> p b' b' b' b m b') -> a -> RespondT p a' a1 b' m b
+to p = RespondT . (respond >-> p)
 
-whatever p = foreverK ((execWriterK (liftP . p >-> toListD >-> exhaust)) >=> respond)
+gatherK :: (Monad (p a' a b' [b] m), Monad m, Proxy p) => (b' -> p a' a b' b m r) -> b' -> p a' a b' [b] m r
+gatherK p = foreverK ((execWriterK (liftP . p >-> toListD >-> exhaust)) >=> respond)
 
-yoyo = runProxy (runIdentityK (fromListS [1,2,3] >-> whatever f >-> printD))
+yoyo = runProxy (runIdentityK (fromListS [1,2,3] >-> gatherK f >-> printD))
 
-exhaust () = forever (do
-	request ())
+exhaust :: (Monad (p a' a b' b1 m), Monad m, Proxy p) =>
+           a' -> p a' a b' b1 m b
+exhaust x = forever (request x)
 
 f () = do
 	x <- request ()
 	replicateM_ x (respond (show x))
 
-scatter :: (Proxy p,Monad m) => [a] -> ProduceT p m a
+scatter :: (Proxy p,Monad m) => [b] -> ProduceT p m b
 scatter = eachS
 
 data PipesGremlinError = PipesGremlinError String deriving (Show,Typeable)
