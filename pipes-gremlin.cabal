@@ -18,6 +18,8 @@ library
                        pipes == 3.3.*,
                        pipes-safe,
                        neo4j-haskell,
-                       transformers
+                       transformers,
+                       aeson,
+                       text
   hs-source-dirs:      src
   default-language:    Haskell2010
