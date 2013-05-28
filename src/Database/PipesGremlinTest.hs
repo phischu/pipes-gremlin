@@ -5,6 +5,8 @@ import Control.Proxy.Trans.Either (runEitherK)
 import Control.Proxy.Trans.Identity (runIdentityK)
 import Control.Proxy.Safe (ExceptionP,SafeIO,trySafeIO,tryK)
 
+import Control.Monad ((>=>))
+
 import Database.Neo4j (Node)
 
 import Database.PipesGremlin
@@ -12,5 +14,5 @@ import Database.PipesGremlin
 runTest :: ProduceT (ExceptionP ProxyFast) SafeIO String -> IO ()
 runTest test = (trySafeIO $ runProxy $ runEitherK $ (const $ runRespondT test) >-> tryK printD) >>= print
 
-test :: ProduceT (ExceptionP ProxyFast) SafeIO String
-test = vertex 1 >>= out >>= out >>= outEdges >>= edgelabel
+test :: Integer -> ProduceT (ExceptionP ProxyFast) SafeIO String
+test = vertex >=> out >=> out >=> gatherK (outEdges >=> edgelabel) >=> return . show
