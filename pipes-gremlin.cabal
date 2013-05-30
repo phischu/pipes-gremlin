@@ -12,7 +12,8 @@ build-type:          Simple
 cabal-version:       >=1.10
 
 library
-  exposed-modules:     Database.PipesGremlin
+  exposed-modules:     Database.PipesGremlin,
+                       Database.PipesGremlin.Internal
   other-modules:       Database.PipesGremlinTest
   build-depends:       base >=4.5 && <4.7,
                        pipes == 3.3.*,

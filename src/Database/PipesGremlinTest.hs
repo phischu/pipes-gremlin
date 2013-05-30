@@ -19,14 +19,14 @@ runTest test = (trySafeIO $ runProxy $ runEitherK $ (const $ runRespondT test) >
 
 test :: ProduceT (ExceptionP ProxyFast) SafeIO (Value,[(Value,Value)])
 test = do
-    package <- vertex 1 >>= follow "PACKAGE"
-    version <- follow "VERSION" package
-    versionname <- nodeProperty "versionname" version
+    package <- nodeById 1 >>= nextLabeled "PACKAGE"
+    version <- nextLabeled "VERSION" package
+    versionname <- property "versionname" version
     fragments <- gather (do
-        variant <- from version >>= follow "VARIANT"
-        modul <- from variant >>= follow "MODULE"
-        fragment <- from modul >>= follow "FRAGMENT"
-        modulename <- nodeProperty "modulename" modul
-        functionname <- nodeProperty "functionname" fragment
+        variant <- return version >>= nextLabeled "VARIANT"
+        modul <- return variant >>= nextLabeled "MODULE"
+        fragment <- return modul >>= nextLabeled "FRAGMENT"
+        modulename <- property "modulename" modul
+        functionname <- property "functionname" fragment
         return (modulename,functionname))
     return (versionname,fragments)
