@@ -4,7 +4,7 @@ module Database.PipesGremlin.Internal where
 import Control.Proxy (
     Proxy,Producer,request,respond,liftP,(>->),
     ProduceT,RespondT(RespondT),runRespondT,
-    eachS,toListD)
+    eachS,toListD,unitU)
 import Control.Proxy.Trans.Writer (execWriterK)
 import Control.Proxy.Safe (ExceptionP,SafeIO,tryIO,throw)
 
@@ -189,12 +189,7 @@ label = return . relationshipType
 gatherPipe :: (Monad (p x' x () [b] m),Monad m,Proxy p) =>
               (p x' x ()  b  m r ) ->
               (p x' x () [b] m ())
-gatherPipe p = (execWriterK (const (liftP p) >-> toListD >-> exhaust) ()) >>= respond
-
--- | Keep requesting until the other pipe terminates.
-exhaust :: (Monad (p a' a b' b1 m), Monad m, Proxy p) =>
-           a' -> p a' a b' b1 m b
-exhaust x = forever (request x)
+gatherPipe p = (execWriterK (const (liftP p) >-> toListD >-> unitU) ()) >>= respond
 
 -- | Any Error that might occur during the actual querying of the database.
 data PipesGremlinError = PipesGremlinError String deriving (Show,Typeable)
