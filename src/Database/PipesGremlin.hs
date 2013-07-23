@@ -11,7 +11,9 @@ module Database.PipesGremlin (
     has,hasnot,ensure,ensurenot,strain,
     -- * Properties
     properties,property,edgeProperties,edgeProperty,
-    nodeId,label
+    nodeId,label,
+    -- * Creation
+    newNode,newEdge,addNodeProperty,addEdgeProperty
     ) where
 
 import Database.PipesGremlin.Internal

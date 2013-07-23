@@ -4,18 +4,20 @@ module Database.PipesGremlin.Internal where
 import Control.Proxy (
     Proxy,Producer,request,respond,liftP,(>->),
     ProduceT,RespondT(RespondT),runRespondT,
-    eachS,toListD,unitU)
+    eachS,toListD,unitU,
+    C)
 import Control.Proxy.Trans.Writer (execWriterK)
-import Control.Proxy.Safe (ExceptionP,SafeIO,tryIO,throw)
 
-import Database.Neo4j (
-    NodeID,Node,defaultClient,lookupNode,getNodeID,
-    Properties,nodeProperties,relationshipProperties,
-    Relationship,RelationshipType,relationshipType,
-    getRelationships,RelationshipRetrievalType(..),
-    relationshipFrom,relationshipTo)
+import Web.Neo (
+    NeoT,Node,Edge,Label,Properties)
+import qualified Web.Neo as Neo (
+    nodeById,nodesByLabel,
+    allEdges,incomingEdges,outgoingEdges,
+    edgeLabel,
+    source,target)
 
 import Control.Monad (forever,(>=>),mzero,guard)
+import Control.Monad.Trans (lift)
 import Control.Exception (Exception)
 import Data.Typeable (Typeable)
 
@@ -23,20 +25,54 @@ import Data.Text (Text,pack)
 import Data.Aeson (Value)
 
 -- | The node with the given Id.
-nodeById :: (Proxy p) => NodeID -> ProduceT (ExceptionP p) SafeIO Node
-nodeById nodeid = RespondT (do
-	result <- tryIO (lookupNode defaultClient nodeid)
-	either (throw.PipesGremlinError) respond result)
+nodeById :: (Proxy p,Monad m) => Integer -> ProduceT p (NeoT m) Node
+nodeById = lift . Neo.nodeById
+
+-- | All nodes with the given label.
+nodesByLabel :: (Proxy p,Monad m) => Label -> ProduceT p (NeoT m) Node
+nodesByLabel = lift . Neo.nodesByLabel >=> eachS
+
+outEdge :: (Proxy p,Monad m) => Node -> ProduceT p (NeoT m) Edge
+outEdge = lift . Neo.outgoingEdges >=> eachS
+
+outEdgeLabeled :: (Proxy p,Monad m) => Label -> Node -> ProduceT p (NeoT m) Edge
+outEdgeLabeled wantedLabel node = do
+    edge  <- outEdge node
+    label <- lift (Neo.edgeLabel edge)
+    guard (wantedLabel == label)
+    return edge
+
+next :: (Proxy p,Monad m) => Node -> ProduceT p (NeoT m) Node
+next = outEdge >=> target
+
+nextLabeled :: (Proxy p,Monad m) => Label -> Node -> ProduceT p (NeoT m) Node
+nextLabeled wantedLabel = outEdgeLabeled wantedLabel >=> target
+
+inEdge :: (Proxy p,Monad m) => Node -> ProduceT p (NeoT m) Edge
+inEdge = lift . Neo.incomingEdges >=> eachS
+
+previous :: (Proxy p,Monad m) => Node -> ProduceT p (NeoT m) Node
+previous = inEdge >=> source
+
+anyEdge :: (Proxy p,Monad m) => Node -> ProduceT p (NeoT m) Edge
+anyEdge = lift . Neo.allEdges >=> eachS
+
+neighbour :: (Proxy p,Monad m,Monad (p C () () Node (NeoT m))) => Node -> ProduceT p (NeoT m) Node
+neighbour node = RespondT (do
+    runRespondT (previous node)
+    runRespondT (next node))
+
+target :: (Proxy p,Monad m) => Edge -> ProduceT p (NeoT m) Node
+target = lift . Neo.target
+
+source :: (Proxy p,Monad m) => Edge -> ProduceT p (NeoT m) Node
+source = lift . Neo.source
+
+
 
 -- | The direction of an edge.
 data Direction = In | Out | Both
-
--- | Translate a direction to a retreivaltype.
-toRetreivalType :: Direction -> RelationshipRetrievalType
-toRetreivalType In = RetrieveIncoming
-toRetreivalType Out = RetrieveOutgoing
-toRetreivalType Both = RetrieveAll
-
+{-
 -- | Jump a node following edges as specified.
 jump :: (Proxy p) => Direction -> Node -> ProduceT (ExceptionP p) SafeIO Node
 jump direction = follow direction >=> target
@@ -195,3 +231,4 @@ gatherPipe p = (execWriterK (const (liftP p) >-> toListD >-> unitU) ()) >>= resp
 data PipesGremlinError = PipesGremlinError String deriving (Show,Typeable)
 
 instance Exception PipesGremlinError
+-}

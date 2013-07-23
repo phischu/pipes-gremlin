@@ -15,11 +15,11 @@ library
   exposed-modules:     Database.PipesGremlin,
                        Database.PipesGremlin.Internal
   other-modules:       Database.PipesGremlinTest
-  build-depends:       base >=4.5 && <4.7,
-                       pipes == 3.3.*,
+  build-depends:       base,
+                       haskell-neo,
+                       pipes,
                        pipes-safe,
-                       neo4j-haskell,
-                       transformers,
+                       mtl,
                        aeson,
                        text
   hs-source-dirs:      src

@@ -8,8 +8,6 @@ import Control.Proxy.Safe (ExceptionP,SafeIO,trySafeIO,tryK)
 
 import Control.Monad ((>=>))
 
-import Database.Neo4j (Node)
-
 import Database.PipesGremlin
 
 import Data.Aeson (Value)
