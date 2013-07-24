@@ -4,17 +4,23 @@ module Database.PipesGremlin.Internal where
 import Control.Proxy (
     Proxy,Producer,request,respond,liftP,(>->),
     ProduceT,RespondT(RespondT),runRespondT,
-    eachS,toListD,unitU,
+    eachS,toListD,unitU,runProxy,
+    ProxyFast,
     C)
 import Control.Proxy.Trans.Writer (execWriterK)
+import Control.Proxy.Trans.Identity (runIdentityP)
 
 import Web.Neo (
-    NeoT,Node,Edge,Label,Properties)
+    NeoT,defaultRunNeoT,NeoError,
+    Node,Edge,Label,Properties)
 import qualified Web.Neo as Neo (
     nodeById,nodesByLabel,
     allEdges,incomingEdges,outgoingEdges,
-    edgeLabel,
+    nodeLabels,nodeProperties,
+    edgeLabel,edgeProperties,
     source,target)
+
+import Web.Rest (RestError)
 
 import Control.Monad (forever,(>=>),mzero,guard)
 import Control.Monad.Trans (lift)
@@ -23,212 +29,130 @@ import Data.Typeable (Typeable)
 
 import Data.Text (Text,pack)
 import Data.Aeson (Value)
+import qualified Data.HashMap.Strict as HashMap (lookup)
+
+type PG m = ProduceT ProxyFast (NeoT m)
+
+runPG :: PG m a -> Producer ProxyFast a (NeoT m) ()
+runPG = runRespondT
 
 -- | The node with the given Id.
-nodeById :: (Proxy p,Monad m) => Integer -> ProduceT p (NeoT m) Node
+nodeById :: (Monad m) => Integer -> PG m Node
 nodeById = lift . Neo.nodeById
 
 -- | All nodes with the given label.
-nodesByLabel :: (Proxy p,Monad m) => Label -> ProduceT p (NeoT m) Node
+nodesByLabel :: (Monad m) => Label -> PG m Node
 nodesByLabel = lift . Neo.nodesByLabel >=> eachS
 
-outEdge :: (Proxy p,Monad m) => Node -> ProduceT p (NeoT m) Edge
+outEdge :: (Monad m) => Node -> PG m Edge
 outEdge = lift . Neo.outgoingEdges >=> eachS
 
-outEdgeLabeled :: (Proxy p,Monad m) => Label -> Node -> ProduceT p (NeoT m) Edge
-outEdgeLabeled wantedLabel node = do
-    edge  <- outEdge node
-    label <- lift (Neo.edgeLabel edge)
-    guard (wantedLabel == label)
-    return edge
-
-next :: (Proxy p,Monad m) => Node -> ProduceT p (NeoT m) Node
-next = outEdge >=> target
-
-nextLabeled :: (Proxy p,Monad m) => Label -> Node -> ProduceT p (NeoT m) Node
-nextLabeled wantedLabel = outEdgeLabeled wantedLabel >=> target
-
-inEdge :: (Proxy p,Monad m) => Node -> ProduceT p (NeoT m) Edge
+inEdge :: (Monad m) => Node -> PG m Edge
 inEdge = lift . Neo.incomingEdges >=> eachS
 
-previous :: (Proxy p,Monad m) => Node -> ProduceT p (NeoT m) Node
-previous = inEdge >=> source
-
-anyEdge :: (Proxy p,Monad m) => Node -> ProduceT p (NeoT m) Edge
+anyEdge :: (Monad m) => Node -> PG m Edge
 anyEdge = lift . Neo.allEdges >=> eachS
 
-neighbour :: (Proxy p,Monad m,Monad (p C () () Node (NeoT m))) => Node -> ProduceT p (NeoT m) Node
+outEdgeLabeled :: (Monad m) => Label -> Node -> PG m Edge
+outEdgeLabeled wantedLabel = outEdge >=> hasEdgeLabel wantedLabel
+
+inEdgeLabeled :: (Monad m) => Text -> Node -> PG m Edge
+inEdgeLabeled wantedLabel = inEdge >=> hasEdgeLabel wantedLabel
+
+anyEdgeLabeled :: (Monad m) => Text -> Node -> PG m Edge
+anyEdgeLabeled wantedLabel = anyEdge >=> hasEdgeLabel wantedLabel
+
+next :: (Monad m) => Node -> PG m Node
+next = outEdge >=> target
+
+previous :: (Monad m) => Node -> PG m Node
+previous = inEdge >=> source
+
+neighbour :: (Monad m) => Node -> PG m Node
 neighbour node = RespondT (do
     runRespondT (previous node)
     runRespondT (next node))
 
-target :: (Proxy p,Monad m) => Edge -> ProduceT p (NeoT m) Node
+nextLabeled :: (Monad m) => Label -> Node -> PG m Node
+nextLabeled wantedLabel = outEdgeLabeled wantedLabel >=> target
+
+previousLabeled :: (Monad m) => Label -> Node -> PG m Node
+previousLabeled wantedLabel = inEdgeLabeled wantedLabel >=> source
+
+neighbourLabeled :: (Monad m) => Label -> Node -> PG m Node
+neighbourLabeled wantedLabel node = RespondT (do
+    runRespondT (previousLabeled wantedLabel node)
+    runRespondT (nextLabeled wantedLabel node))
+
+nodeLabel :: (Monad m) => Node -> PG m Label
+nodeLabel = lift . Neo.nodeLabels >=> eachS
+
+hasNodeLabel :: (Monad m) => Text -> Node -> PG m Node
+hasNodeLabel wantedLabel = has (nodeLabel >=> strain (== wantedLabel))
+
+nodeProperty :: (Monad m) => Text -> Node -> PG m Value
+nodeProperty key = lift . Neo.nodeProperties >=> lookupProperty key
+
+lookupProperty :: (Monad m) => Text -> Properties -> PG m Value
+lookupProperty key properties = case HashMap.lookup key properties of
+    Nothing -> mzero
+    Just value -> return value
+
+target :: (Monad m) => Edge -> PG m Node
 target = lift . Neo.target
 
-source :: (Proxy p,Monad m) => Edge -> ProduceT p (NeoT m) Node
+source :: (Monad m) => Edge -> PG m Node
 source = lift . Neo.source
 
+edgeLabel :: (Monad m) => Edge -> PG m Label
+edgeLabel = lift . Neo.edgeLabel
 
+hasEdgeLabel :: (Monad m) => Text -> Edge -> PG m Edge
+hasEdgeLabel wantedLabel = has (edgeLabel >=> strain (== wantedLabel))
 
--- | The direction of an edge.
-data Direction = In | Out | Both
-{-
--- | Jump a node following edges as specified.
-jump :: (Proxy p) => Direction -> Node -> ProduceT (ExceptionP p) SafeIO Node
-jump direction = follow direction >=> target
-
--- | A next node following only edges with the given label
-jumpLabeled :: (Proxy p) => Direction -> Text -> Node -> ProduceT (ExceptionP p) SafeIO Node
-jumpLabeled direction edgelabel = followLabeled direction edgelabel >=> target
-
--- | Any outgoing Edge.
-follow :: (Proxy p) => Direction -> Node -> ProduceT (ExceptionP p) SafeIO Relationship
-follow direction node = RespondT (do
-    result <- tryIO (getRelationships defaultClient (toRetreivalType direction) node)
-    either (throw . PipesGremlinError) respond result) >>= eachS
-
--- | An outgoing Edge with the given label
-followLabeled :: (Proxy p) => Direction -> Text -> Node -> ProduceT (ExceptionP p) SafeIO Relationship
-followLabeled direction edgelabel node = do
-    edge <- follow direction node
-    guard (pack (relationshipType edge) == edgelabel)
-    return edge
-
--- | A next node following any edge.
-next :: (Proxy p) => Node -> ProduceT (ExceptionP p) SafeIO Node
-next = jump Out
-
--- | A next node following only edges with the given label
-nextLabeled :: (Proxy p) => Text -> Node -> ProduceT (ExceptionP p) SafeIO Node
-nextLabeled = jumpLabeled Out
-
--- | Any outgoing Edge.
-outEdge :: (Proxy p) => Node -> ProduceT (ExceptionP p) SafeIO Relationship
-outEdge = follow Out
-
--- | An outgoing Edge with the given label
-outEdgeLabeled :: (Proxy p) => Text -> Node -> ProduceT (ExceptionP p) SafeIO Relationship
-outEdgeLabeled = followLabeled Out
-
--- | A previous node following any edge backwards.
-previous :: (Proxy p) => Node -> ProduceT (ExceptionP p) SafeIO Node
-previous = jump In
-
--- | A previous node following backwards only edges with the given label.
-previousLabeled :: (Proxy p) => Text -> Node -> ProduceT (ExceptionP p) SafeIO Node
-previousLabeled = jumpLabeled In
-
--- | Any incoming edge.
-inEdge :: (Proxy p) => Node -> ProduceT (ExceptionP p) SafeIO Relationship
-inEdge = follow In
-
--- | An incoming edge with the given label.
-inEdgeLabeled :: (Proxy p) => Text -> Node -> ProduceT (ExceptionP p) SafeIO Relationship
-inEdgeLabeled = followLabeled In
-
--- | A neighbouring node following any edge in any direction.
-neighbour :: (Proxy p) => Node -> ProduceT (ExceptionP p) SafeIO Node
-neighbour = jump Both
-
--- | A neighbouring node following edgews with the given label in any direction.
-neighbourLabeled :: (Proxy p) => Text -> Node -> ProduceT (ExceptionP p) SafeIO Node
-neighbourLabeled = jumpLabeled Both
-
--- | Any incoming or outgoing edge.
-anyEdge :: (Proxy p) => Node -> ProduceT (ExceptionP p) SafeIO Relationship
-anyEdge = follow Both
-
--- | Any incoming or outgoing edge with the given label.
-anyEdgeLabeled :: (Proxy p) => Text -> Node -> ProduceT (ExceptionP p) SafeIO Relationship
-anyEdgeLabeled = followLabeled Both
-
--- | The source node of an edge.
-source :: (Proxy p,Monad m) => Relationship -> ProduceT p m Node
-source = return . relationshipFrom
-
--- | The target node of an edge.
-target :: (Proxy p,Monad m) => Relationship -> ProduceT p m Node
-target = return . relationshipTo
+edgeProperty :: (Monad m) => Text -> Edge -> PG m Value
+edgeProperty key = lift . Neo.edgeProperties >=> lookupProperty key
 
 -- | Gather all results in a list.
-gather :: (Monad (Producer p [b] m),Proxy p,Monad m) =>
-          ProduceT p m  b ->
-          ProduceT p m [b]
+gather :: (Monad m) => PG m a -> PG m [a]
 gather = RespondT . gatherPipe . runRespondT
 
 -- | Produce each element of the given list.
-scatter :: (Proxy p,Monad m) =>
-           [b] -> ProduceT p m b
+scatter :: (Monad m) => [a] -> PG m a
 scatter = eachS
 
--- | Only let an element through if the given pipe produces anything.
-has :: (Proxy p,Monad m,Monad (Producer p [a] m)) => ProduceT p m a -> b -> ProduceT p m b
-has p b = do
-    ensure p
-    return b
+has :: (Monad m) => (a -> PG m b) -> a -> PG m a
+has p a = do
+    ensure (p a)
+    return a
 
 -- | Only let an element through if the given pipe produces nothing.
-hasnot :: (Proxy p,Monad m,Monad (Producer p [a] m)) => ProduceT p m a -> b -> ProduceT p m b
-hasnot p b = do
-    ensurenot p
-    return b
+hasnot :: (Monad m) => (a -> PG m b) -> a -> PG m a
+hasnot p a = do
+    ensurenot (p a)
+    return a
+
+-- | Filter out only elements satisfying the given predicate.
+strain :: (Monad m) => (a -> Bool) -> a -> PG m a
+strain predicate a
+    | predicate a = return a
+    | otherwise   = mzero
 
 -- | Only continue if the given pipe produces anything.
-ensure :: (Proxy p,Monad m,Monad (Producer p [a] m)) =>  ProduceT p m a -> ProduceT p m ()
+ensure :: (Monad m) => PG m a -> PG m ()
 ensure p = do
     as <- gather p
     guard (not (null as))
 
 -- | Only continue if the given pipe produces nothing.
-ensurenot :: (Proxy p,Monad m,Monad (Producer p [a] m)) =>  ProduceT p m a -> ProduceT p m ()
+ensurenot :: (Monad m) => PG m a -> PG m ()
 ensurenot p = do
     as <- gather p
     guard (null as)
 
--- | Filter out only elements satisfying the given predicate.
-strain :: (Proxy p,Monad m) => (a -> Bool) -> ProduceT p m a -> ProduceT p m a
-strain predicate pipe = do
-    a <- pipe
-    guard (predicate a)
-    return a
-
--- | A 'Map' of all properties of a node.
-properties :: (Proxy p,Monad m) => Node -> ProduceT p m Properties
-properties = return . nodeProperties
-
--- | The property with the given name of the given node.
---   produces nothing if no such property exists.
-property :: (Proxy p,Monad m) => Text -> Node -> ProduceT p m Value
-property propertyname node = maybe mzero return (lookup propertyname (nodeProperties node))
-
--- | A 'Map' of all properties of an edge.
-edgeProperties :: (Proxy p,Monad m) => Relationship -> ProduceT p m Properties
-edgeProperties = return . relationshipProperties
-
--- | The property with the given name of the given edge.
---   produces nothing if no such property exists.
-edgeProperty :: (Proxy p,Monad m) => Text -> Relationship -> ProduceT p m Value
-edgeProperty propertyname relationship = maybe
-    mzero
-    return
-    (lookup propertyname (relationshipProperties relationship))
-
--- | The id of the given node.
-nodeId :: (Proxy p,Monad m) => Node -> ProduceT p m NodeID
-nodeId = return . getNodeID
-
--- | The label of the given edge.
-label :: (Proxy p,Monad m) => Relationship -> ProduceT p m RelationshipType
-label = return . relationshipType
-
 -- | Gather all responds of a pipe into a list.
-gatherPipe :: (Monad (p x' x () [b] m),Monad m,Proxy p) =>
-              (p x' x ()  b  m r ) ->
-              (p x' x () [b] m ())
+gatherPipe :: (Monad m) =>
+              (ProxyFast x' x ()  b  m r ) ->
+              (ProxyFast x' x () [b] m ())
 gatherPipe p = (execWriterK (const (liftP p) >-> toListD >-> unitU) ()) >>= respond
 
--- | Any Error that might occur during the actual querying of the database.
-data PipesGremlinError = PipesGremlinError String deriving (Show,Typeable)
-
-instance Exception PipesGremlinError
--}
