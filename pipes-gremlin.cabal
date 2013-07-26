@@ -1,5 +1,5 @@
 name:                pipes-gremlin
-version:             0.1.0.1
+version:             0.2.0.0
 synopsis:            Graph query language based on pipes heavily inspired by gremlin.
 -- description:         
 license:             BSD3

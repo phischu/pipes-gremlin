@@ -2,16 +2,14 @@
 module Database.PipesGremlin.Internal where
 
 import Control.Proxy (
-    Proxy,Producer,request,respond,liftP,(>->),
+    Proxy,Producer,respond,liftP,(>->),
     ProduceT,RespondT(RespondT),runRespondT,
-    eachS,toListD,unitU,runProxy,
-    ProxyFast,
-    C)
+    eachS,toListD,unitU,
+    ProxyFast,)
 import Control.Proxy.Trans.Writer (execWriterK)
-import Control.Proxy.Trans.Identity (runIdentityP)
 
 import Web.Neo (
-    NeoT,defaultRunNeoT,NeoError,
+    NeoT,
     Node,Edge,Label,Properties)
 import qualified Web.Neo as Neo (
     nodeById,nodesByLabel,
@@ -20,14 +18,10 @@ import qualified Web.Neo as Neo (
     edgeLabel,edgeProperties,
     source,target)
 
-import Web.Rest (RestError)
-
-import Control.Monad (forever,(>=>),mzero,guard)
+import Control.Monad ((>=>),mzero,guard)
 import Control.Monad.Trans (lift)
-import Control.Exception (Exception)
-import Data.Typeable (Typeable)
 
-import Data.Text (Text,pack)
+import Data.Text (Text)
 import Data.Aeson (Value)
 import qualified Data.HashMap.Strict as HashMap (lookup)
 
