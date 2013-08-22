@@ -2,14 +2,14 @@
 module Database.PipesGremlin.Internal where
 
 import Control.Proxy (
-    Proxy,Producer,respond,liftP,(>->),
+    runProxy,Proxy,Producer,respond,liftP,(>->),
     ProduceT,RespondT(RespondT),runRespondT,
-    eachS,toListD,unitU,
+    eachS,toListD,unitU,printD,hoist,
     ProxyFast,)
 import Control.Proxy.Trans.Writer (execWriterK)
 
 import Web.Neo (
-    NeoT,
+    defaultRunNeoT,NeoT,
     Node,Edge,Label,Properties)
 import qualified Web.Neo as Neo (
     nodeById,nodesByLabel,
@@ -22,13 +22,21 @@ import Control.Monad ((>=>),mzero,guard)
 import Control.Monad.Trans (lift)
 
 import Data.Text (Text)
-import Data.Aeson (Value)
+import Data.Aeson (Value,FromJSON,fromJSON,Result(Error,Success))
 import qualified Data.HashMap.Strict as HashMap (lookup)
 
 type PG m = ProduceT ProxyFast (NeoT m)
 
+-- | Run the Query as a producer of its results.
 runPG :: PG m a -> Producer ProxyFast a (NeoT m) ()
 runPG = runRespondT
+
+-- | Run the Query and print its results.
+printPG :: (Show a) => PG IO a -> IO ()
+printPG pg = defaultRunNeoT (runProxy (
+    const (runPG pg) >->
+    (hoist (lift . lift) .) printD))
+        >>= print
 
 -- | The node with the given Id.
 nodeById :: (Monad m) => Integer -> PG m Node
@@ -84,8 +92,14 @@ nodeLabel = lift . Neo.nodeLabels >=> eachS
 hasNodeLabel :: (Monad m) => Text -> Node -> PG m Node
 hasNodeLabel wantedLabel = has (nodeLabel >=> strain (== wantedLabel))
 
-nodeProperty :: (Monad m) => Text -> Node -> PG m Value
-nodeProperty key = lift . Neo.nodeProperties >=> lookupProperty key
+nodeProperty :: (Monad m,FromJSON a) => Text -> Node -> PG m a
+nodeProperty key = nodePropertyValue key >=> (\value ->
+    case fromJSON value of
+        Error _             -> mzero
+        Success parsedValue -> return parsedValue)
+
+nodePropertyValue :: (Monad m) => Text -> Node -> PG m Value
+nodePropertyValue key = lift . Neo.nodeProperties >=> lookupProperty key
 
 lookupProperty :: (Monad m) => Text -> Properties -> PG m Value
 lookupProperty key properties = case HashMap.lookup key properties of
@@ -104,8 +118,14 @@ edgeLabel = lift . Neo.edgeLabel
 hasEdgeLabel :: (Monad m) => Text -> Edge -> PG m Edge
 hasEdgeLabel wantedLabel = has (edgeLabel >=> strain (== wantedLabel))
 
-edgeProperty :: (Monad m) => Text -> Edge -> PG m Value
-edgeProperty key = lift . Neo.edgeProperties >=> lookupProperty key
+edgeProperty :: (Monad m,FromJSON a) => Text -> Edge -> PG m a
+edgeProperty key = edgePropertyValue key >=> (\value ->
+    case fromJSON value of
+        Error _             -> mzero
+        Success parsedValue -> return parsedValue)
+
+edgePropertyValue :: (Monad m) => Text -> Edge -> PG m Value
+edgePropertyValue key = lift . Neo.edgeProperties >=> lookupProperty key
 
 -- | Gather all results in a list.
 gather :: (Monad m) => PG m a -> PG m [a]
@@ -115,6 +135,7 @@ gather = RespondT . gatherPipe . runRespondT
 scatter :: (Monad m) => [a] -> PG m a
 scatter = eachS
 
+-- | Only let an element through if the given pipe produces something.
 has :: (Monad m) => (a -> PG m b) -> a -> PG m a
 has p a = do
     ensure (p a)

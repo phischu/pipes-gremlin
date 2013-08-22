@@ -1,6 +1,6 @@
 module Database.PipesGremlin (
     -- * Basics
-    PG,runPG,
+    PG,runPG,printPG,
     -- * Start
     nodeById,nodesByLabel,
     -- * Node
@@ -8,10 +8,10 @@ module Database.PipesGremlin (
     next,previous,neighbour,
     outEdgeLabeled,inEdgeLabeled,anyEdgeLabeled,
     nextLabeled,previousLabeled,neighbourLabeled,
-    nodeLabel,hasNodeLabel,nodeProperty,
+    nodeLabel,hasNodeLabel,nodeProperty,nodePropertyValue,
     -- * Edge
     source,target,
-    edgeLabel,hasEdgeLabel,edgeProperty,
+    edgeLabel,hasEdgeLabel,edgeProperty,edgePropertyValue,
     -- * Control
     gather,scatter,
     has,hasnot,strain,ensure,ensurenot
