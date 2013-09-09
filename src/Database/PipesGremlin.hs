@@ -4,18 +4,22 @@ module Database.PipesGremlin (
     -- * Start
     nodeById,nodesByLabel,
     -- * Node
+    Node(..),
     outEdge,inEdge,anyEdge,
-    next,previous,neighbour,
+    following,previous,neighbour,
     outEdgeLabeled,inEdgeLabeled,anyEdgeLabeled,
-    nextLabeled,previousLabeled,neighbourLabeled,
+    followingLabeled,previousLabeled,neighbourLabeled,
     nodeLabel,hasNodeLabel,nodeProperty,nodePropertyValue,
     -- * Edge
+    Edge(..),
     source,target,
     edgeLabel,hasEdgeLabel,edgeProperty,edgePropertyValue,
     -- * Control
-    gather,scatter,
+    gather,scatter,(>=>),
     has,hasnot,strain,ensure,ensurenot
     ) where
 
 import Database.PipesGremlin.Internal
 
+import Web.Neo (Node(..),Edge(..))
+import Control.Monad ((>=>))

@@ -1,12 +1,11 @@
 {-# LANGUAGE DeriveDataTypeable, ScopedTypeVariables #-}
 module Database.PipesGremlin.Internal where
 
-import Control.Proxy (
-    runProxy,Proxy,Producer,respond,liftP,(>->),
-    ProduceT,RespondT(RespondT),runRespondT,
-    eachS,toListD,unitU,printD,hoist,
-    ProxyFast,)
-import Control.Proxy.Trans.Writer (execWriterK)
+import Pipes (
+    ListT(Select),enumerate,each,
+    Producer,runEffect,(>->))
+import Pipes.Prelude (toListM)
+import qualified Pipes.Prelude as Pipes (print)
 
 import Web.Neo (
     defaultRunNeoT,NeoT,
@@ -19,24 +18,22 @@ import qualified Web.Neo as Neo (
     source,target)
 
 import Control.Monad ((>=>),mzero,guard)
+import Control.Monad.IO.Class (MonadIO,liftIO)
 import Control.Monad.Trans (lift)
 
 import Data.Text (Text)
 import Data.Aeson (Value,FromJSON,fromJSON,Result(Error,Success))
 import qualified Data.HashMap.Strict as HashMap (lookup)
 
-type PG m = ProduceT ProxyFast (NeoT m)
+type PG m = ListT (NeoT m)
 
 -- | Run the Query as a producer of its results.
-runPG :: PG m a -> Producer ProxyFast a (NeoT m) ()
-runPG = runRespondT
+runPG :: PG m a -> Producer a (NeoT m) ()
+runPG = enumerate
 
 -- | Run the Query and print its results.
-printPG :: (Show a) => PG IO a -> IO ()
-printPG pg = defaultRunNeoT (runProxy (
-    const (runPG pg) >->
-    (hoist (lift . lift) .) printD))
-        >>= print
+printPG :: (Show a,MonadIO m) => PG m a -> m ()
+printPG pg = defaultRunNeoT (runEffect (enumerate pg >-> Pipes.print)) >>= liftIO . print
 
 -- | The node with the given Id.
 nodeById :: (Monad m) => Integer -> PG m Node
@@ -44,16 +41,16 @@ nodeById = lift . Neo.nodeById
 
 -- | All nodes with the given label.
 nodesByLabel :: (Monad m) => Label -> PG m Node
-nodesByLabel = lift . Neo.nodesByLabel >=> eachS
+nodesByLabel = lift . Neo.nodesByLabel >=> Select . each
 
 outEdge :: (Monad m) => Node -> PG m Edge
-outEdge = lift . Neo.outgoingEdges >=> eachS
+outEdge = lift . Neo.outgoingEdges >=> Select . each
 
 inEdge :: (Monad m) => Node -> PG m Edge
-inEdge = lift . Neo.incomingEdges >=> eachS
+inEdge = lift . Neo.incomingEdges >=> Select . each
 
 anyEdge :: (Monad m) => Node -> PG m Edge
-anyEdge = lift . Neo.allEdges >=> eachS
+anyEdge = lift . Neo.allEdges >=> Select . each
 
 outEdgeLabeled :: (Monad m) => Label -> Node -> PG m Edge
 outEdgeLabeled wantedLabel = outEdge >=> hasEdgeLabel wantedLabel
@@ -64,30 +61,30 @@ inEdgeLabeled wantedLabel = inEdge >=> hasEdgeLabel wantedLabel
 anyEdgeLabeled :: (Monad m) => Text -> Node -> PG m Edge
 anyEdgeLabeled wantedLabel = anyEdge >=> hasEdgeLabel wantedLabel
 
-next :: (Monad m) => Node -> PG m Node
-next = outEdge >=> target
+following :: (Monad m) => Node -> PG m Node
+following = outEdge >=> target
 
 previous :: (Monad m) => Node -> PG m Node
 previous = inEdge >=> source
 
 neighbour :: (Monad m) => Node -> PG m Node
-neighbour node = RespondT (do
-    runRespondT (previous node)
-    runRespondT (next node))
+neighbour node = Select (do
+    enumerate (previous node)
+    enumerate (following node))
 
-nextLabeled :: (Monad m) => Label -> Node -> PG m Node
-nextLabeled wantedLabel = outEdgeLabeled wantedLabel >=> target
+followingLabeled :: (Monad m) => Label -> Node -> PG m Node
+followingLabeled wantedLabel = outEdgeLabeled wantedLabel >=> target
 
 previousLabeled :: (Monad m) => Label -> Node -> PG m Node
 previousLabeled wantedLabel = inEdgeLabeled wantedLabel >=> source
 
 neighbourLabeled :: (Monad m) => Label -> Node -> PG m Node
-neighbourLabeled wantedLabel node = RespondT (do
-    runRespondT (previousLabeled wantedLabel node)
-    runRespondT (nextLabeled wantedLabel node))
+neighbourLabeled wantedLabel node = Select (do
+    enumerate (previousLabeled wantedLabel node)
+    enumerate (followingLabeled wantedLabel node))
 
 nodeLabel :: (Monad m) => Node -> PG m Label
-nodeLabel = lift . Neo.nodeLabels >=> eachS
+nodeLabel = lift . Neo.nodeLabels >=> Select . each
 
 hasNodeLabel :: (Monad m) => Text -> Node -> PG m Node
 hasNodeLabel wantedLabel = has (nodeLabel >=> strain (== wantedLabel))
@@ -129,11 +126,11 @@ edgePropertyValue key = lift . Neo.edgeProperties >=> lookupProperty key
 
 -- | Gather all results in a list.
 gather :: (Monad m) => PG m a -> PG m [a]
-gather = RespondT . gatherPipe . runRespondT
+gather = lift . toListM . enumerate
 
 -- | Produce each element of the given list.
 scatter :: (Monad m) => [a] -> PG m a
-scatter = eachS
+scatter = Select . each
 
 -- | Only let an element through if the given pipe produces something.
 has :: (Monad m) => (a -> PG m b) -> a -> PG m a
@@ -164,10 +161,4 @@ ensurenot :: (Monad m) => PG m a -> PG m ()
 ensurenot p = do
     as <- gather p
     guard (null as)
-
--- | Gather all responds of a pipe into a list.
-gatherPipe :: (Monad m) =>
-              (ProxyFast x' x ()  b  m r ) ->
-              (ProxyFast x' x () [b] m ())
-gatherPipe p = (execWriterK (const (liftP p) >-> toListD >-> unitU) ()) >>= respond
 
