@@ -9,13 +9,15 @@ import qualified Pipes.Prelude as Pipes (print)
 
 import Web.Neo (
     defaultRunNeoT,NeoT,
-    Node,Edge,Label,Properties)
+    Node,Edge,Label,Properties,
+    CypherQuery,CypherParameters,CypherResult(..))
 import qualified Web.Neo as Neo (
     nodeById,nodesByLabel,
     allEdges,incomingEdges,outgoingEdges,
     nodeLabels,nodeProperties,
     edgeLabel,edgeProperties,
-    source,target)
+    source,target,
+    cypher)
 
 import Control.Monad ((>=>),mzero,guard)
 import Control.Monad.IO.Class (MonadIO,liftIO)
@@ -23,7 +25,7 @@ import Control.Monad.Trans (lift)
 
 import Data.Text (Text)
 import Data.Aeson (Value,FromJSON,fromJSON,Result(Error,Success))
-import qualified Data.HashMap.Strict as HashMap (lookup)
+import qualified Data.HashMap.Strict as HashMap (fromList,lookup)
 
 type PG m = ListT (NeoT m)
 
@@ -123,6 +125,12 @@ edgeProperty key = edgePropertyValue key >=> (\value ->
 
 edgePropertyValue :: (Monad m) => Text -> Edge -> PG m Value
 edgePropertyValue key = lift . Neo.edgeProperties >=> lookupProperty key
+
+cypherRows :: (Monad m) => CypherQuery -> CypherParameters -> PG m Properties
+cypherRows cypherQuery cypherParameters = do
+    cypherResult <- lift (Neo.cypher cypherQuery cypherParameters)
+    let toProperties = HashMap.fromList . zip (columnHeaders cypherResult)
+    scatter (map toProperties (rowValues cypherResult))   
 
 -- | Gather all results in a list.
 gather :: (Monad m) => PG m a -> PG m [a]

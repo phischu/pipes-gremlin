@@ -14,6 +14,8 @@ module Database.PipesGremlin (
     Edge(..),
     source,target,
     edgeLabel,hasEdgeLabel,edgeProperty,edgePropertyValue,
+    -- * Cypher
+    cypherRows,
     -- * Control
     gather,scatter,(>=>),
     has,hasnot,strain,ensure,ensurenot
@@ -21,5 +23,7 @@ module Database.PipesGremlin (
 
 import Database.PipesGremlin.Internal
 
-import Web.Neo (Node(..),Edge(..))
+import Web.Neo (
+    Node(..),Edge(..),Label,Properties,
+    CypherQuery,CypherParameters)
 import Control.Monad ((>=>))
